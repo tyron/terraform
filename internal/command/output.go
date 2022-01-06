@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hashicorp/terraform/internal/cloud"
 	"github.com/hashicorp/terraform/internal/command/arguments"
 	"github.com/hashicorp/terraform/internal/command/views"
 	"github.com/hashicorp/terraform/internal/states"
 	"github.com/hashicorp/terraform/internal/tfdiags"
+	"github.com/zclconf/go-cty/cty"
 )
 
 // OutputCommand is a Command implementation that reads an output
@@ -73,6 +75,28 @@ func (c *OutputCommand) Outputs(statePath string) (map[string]*states.OutputValu
 	if err != nil {
 		diags = diags.Append(fmt.Errorf("Error selecting workspace: %s", err))
 		return nil, diags
+	}
+
+	// See if we are using the Cloud backend
+	cloud, cloudOk := b.(*cloud.Cloud)
+	if cloudOk {
+		workspace, err := cloud.Workspace(env)
+		if err != nil {
+			diags = diags.Append(fmt.Errorf("Failed to load workspace: %s", err))
+			return nil, diags
+		}
+		stateOutputs := workspace.CurrentStateVersion.Outputs
+
+		// Convert the []tfe.StateVersionOutput to map[string]OutputValue
+		rootModule := states.NewState().RootModule()
+		for _, output := range stateOutputs {
+			rootModule.SetOutputValue(
+				output.Name,
+				cty.StringVal(fmt.Sprintf("%v", output.Value)),
+				output.Sensitive,
+			)
+		}
+		return rootModule.OutputValues, diags
 	}
 
 	// Get the state
